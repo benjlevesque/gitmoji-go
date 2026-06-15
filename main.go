@@ -9,7 +9,11 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"regexp"
 	"strings"
+
+	"github.com/lithammer/fuzzysearch/fuzzy"
+	"github.com/manifoldco/promptui"
 )
 
 const gitmojiURL = "https://gitmoji.dev/api/gitmojis"
@@ -61,6 +65,14 @@ func main() {
 		return
 	}
 
+	if search == "" {
+		g, err := promptForGitmoji(&gitmojis)
+		if err != nil {
+			fmt.Println("Error:", err)
+		}
+		gitmojis = []gitmoji{g}
+	}
+
 	if search != "" {
 		gitmojis = applySearch(gitmojis, search)
 	}
@@ -81,6 +93,7 @@ func main() {
 		err := cmd.Run()
 
 		message := out.String()
+		message = removeGitmojiPrefix(message)
 
 		cmd = exec.Command("git", "commit", "--amend", "--message", fmt.Sprintf("%s %s", prefix, message))
 		cmd.Stdout = &out
@@ -132,10 +145,20 @@ func readGitmojis() ([]gitmoji, error) {
 	return gitmojiApiResponse.Gitmojis, nil
 }
 
+func isMatch(g gitmoji, search string) bool {
+	fields := []string{g.Name, g.Description, g.Code}
+	for _, field := range fields {
+		if fuzzy.MatchNormalizedFold(strings.ToLower(search), strings.ToLower(field)) {
+			return true
+		}
+	}
+	return false
+}
+
 func applySearch(gitmojis []gitmoji, search string) []gitmoji {
 	var filteredGitmojis []gitmoji
 	for _, g := range gitmojis {
-		if strings.Contains(g.Name, search) || strings.Contains(g.Description, search) || strings.Contains(g.Code, search) {
+		if isMatch(g, search) {
 			filteredGitmojis = append(filteredGitmojis, g)
 		}
 	}
@@ -168,4 +191,41 @@ func printGitmojis(gitmojis []gitmoji, format Format) {
 			fmt.Printf("%s\n", g.Code)
 		}
 	}
+}
+
+func removeGitmojiPrefix(message string) string {
+	parts := strings.SplitN(message, " ", 2)
+	if len(parts) < 2 {
+		return message
+	}
+	if regexp.MustCompile(`\w`).MatchString(parts[0]) {
+		return message
+	}
+	return strings.TrimSpace(parts[1])
+}
+
+func promptForGitmoji(gitmojis *[]gitmoji) (gitmoji, error) {
+	templates := &promptui.SelectTemplates{
+		Label:    "  {{ .Emoji | cyan }} {{ .Code | red }} {{ .Description | green }}",
+		Active:   "▸ {{ .Emoji | cyan }} {{ .Code | red }} {{ .Description | green }}",
+		Inactive: "  {{ .Emoji | cyan }} {{ .Code | red }} {{ .Description | green }}",
+		Selected: "✔ {{ .Emoji | cyan }} {{ .Code | red }} {{ .Description | green }}",
+	}
+	prompt := promptui.Select{
+		Label:             "",
+		Items:             *gitmojis,
+		Templates:         templates,
+		HideSelected:      true,
+		StartInSearchMode: true,
+		Searcher: func(input string, index int) bool {
+			return isMatch((*gitmojis)[index], input)
+		},
+	}
+	i, _, err := prompt.Run()
+
+	if err != nil {
+		return gitmoji{}, err
+	}
+
+	return (*gitmojis)[i], nil
 }
