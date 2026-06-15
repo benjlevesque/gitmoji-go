@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -41,10 +42,12 @@ var (
 
 // CLI flags
 var (
-	search string
-	format Format
-	single bool
-	amend  bool
+	search  string
+	format  Format
+	single  bool
+	amend   bool
+	commit  bool
+	message string
 )
 
 func main() {
@@ -52,7 +55,19 @@ func main() {
 	flag.StringVar((*string)(&format), "format", "list", "Output format: list, emoji, code or json")
 	flag.BoolVar(&single, "single", false, "Show only the first result")
 	flag.BoolVar(&amend, "git-amend", false, "Amend the last commit with the selected gitmoji as prefix")
+	flag.BoolVar(&commit, "git-commit", false, "Create a new commit with the selected gitmoji as prefix")
+	flag.StringVar(&message, "message", "", "Commit message for the new commit")
 	flag.Parse()
+
+	if commit && amend {
+		fmt.Println("You cannot use both --git-commit and --git-amend at the same time")
+		return
+	}
+
+	if amend && message != "" {
+		fmt.Println("You cannot use --message when using --git-amend")
+		return
+	}
 
 	if format != formatList && format != formatEmoji && format != formatCode && format != formatJSON {
 		fmt.Println("Invalid format. Valid formats are: list, emoji, code or json")
@@ -61,14 +76,13 @@ func main() {
 
 	gitmojis, err := readGitmojis()
 	if err != nil {
-		fmt.Println("Error:", err)
-		return
+		log.Fatal(err)
 	}
 
 	if search == "" {
 		g, err := promptForGitmoji(&gitmojis)
 		if err != nil {
-			fmt.Println("Error:", err)
+			log.Fatal(err)
 		}
 		gitmojis = []gitmoji{g}
 	}
@@ -87,23 +101,45 @@ func main() {
 			prefix = gitmojis[0].Code
 		}
 
-		var out strings.Builder
-		cmd := exec.Command("git", "log", "-1", "--pretty=%B")
-		cmd.Stdout = &out
-		err := cmd.Run()
+		message, err := runGitCommand("git", "log", "-1", "--pretty=%B")
 
-		message := out.String()
-		message = removeGitmojiPrefix(message)
-
-		cmd = exec.Command("git", "commit", "--amend", "--message", fmt.Sprintf("%s %s", prefix, message))
-		cmd.Stdout = &out
-		err = cmd.Run()
+		_, err = runGitCommand("commit", "--amend", "--message", fmt.Sprintf("%s %s", prefix, message))
 		if err != nil {
-			fmt.Println("Error:", err)
+			log.Fatal(err)
+		}
+	} else if commit {
+		prefix := gitmojis[0].Emoji
+		if format == formatCode {
+			prefix = gitmojis[0].Code
+		}
+
+		if message == "" {
+			message, err = promptForCommitMessage()
+			if err != nil {
+				log.Fatal(err)
+			}
+		}
+
+		_, err = runGitCommand("commit", "--message", fmt.Sprintf("%s %s", prefix, message))
+		if err != nil {
+			log.Fatalf("Error in git commit: %v", err)
 		}
 		return
+	} else {
+		printGitmojis(gitmojis, format)
 	}
-	printGitmojis(gitmojis, format)
+}
+
+func runGitCommand(args ...string) (string, error) {
+	cmd := exec.Command("git", args...)
+	var out strings.Builder
+	cmd.Stdout = &out
+	err := cmd.Run()
+	if err != nil {
+		return "", fmt.Errorf("Error running git command:\n%v", out.String())
+	}
+
+	return out.String(), nil
 }
 
 func readGitmojis() ([]gitmoji, error) {
@@ -169,8 +205,7 @@ func printGitmojis(gitmojis []gitmoji, format Format) {
 	if format == formatJSON {
 		bytes, err := json.MarshalIndent(gitmojis, "", "  ")
 		if err != nil {
-			fmt.Println("Error:", err)
-			return
+			log.Fatal(err)
 		}
 		fmt.Println(string(bytes))
 		return
@@ -228,4 +263,15 @@ func promptForGitmoji(gitmojis *[]gitmoji) (gitmoji, error) {
 	}
 
 	return (*gitmojis)[i], nil
+}
+func promptForCommitMessage() (string, error) {
+	prompt := promptui.Prompt{
+		Label:       "Commit message",
+		HideEntered: true,
+	}
+	message, err := prompt.Run()
+	if err != nil {
+		return "", err
+	}
+	return message, nil
 }
