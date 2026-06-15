@@ -48,9 +48,17 @@ var (
 	amend   bool
 	commit  bool
 	message string
+	version bool
+)
+
+// Build flags
+var (
+	buildVersion string = "dev"
+	buildSha     string = "none"
 )
 
 func main() {
+	flag.BoolVar(&version, "version", false, "Display version information")
 	flag.StringVar(&search, "search", "", "Search for a gitmoji by name, description or code")
 	flag.StringVar((*string)(&format), "format", "list", "Output format: list, emoji, code or json")
 	flag.BoolVar(&single, "single", false, "Show only the first result")
@@ -58,6 +66,11 @@ func main() {
 	flag.BoolVar(&commit, "git-commit", false, "Create a new commit with the selected gitmoji as prefix")
 	flag.StringVar(&message, "message", "", "Commit message for the new commit")
 	flag.Parse()
+
+	if version {
+		fmt.Printf("gitmoji-go version: %s, commit: %s\n", buildVersion, buildSha)
+		return
+	}
 
 	if commit && amend {
 		fmt.Println("You cannot use both --git-commit and --git-amend at the same time")
