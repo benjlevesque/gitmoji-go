@@ -114,7 +114,10 @@ func main() {
 			prefix = gitmojis[0].Code
 		}
 
-		message, err := runGitCommand("git", "log", "-1", "--pretty=%B")
+		message, err := runGitCommand("log", "-1", "--pretty=%B")
+		if err != nil {
+			log.Fatal(err)
+		}
 
 		_, err = runGitCommand("commit", "--amend", "--message", fmt.Sprintf("%s %s", prefix, message))
 		if err != nil {
